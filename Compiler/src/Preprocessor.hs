@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TupleSections #-}
 
 module Preprocessor where
 
@@ -58,22 +59,82 @@ preprocessDecl d = do
     transformedDecl <- transformDecl d
     pure [transformedDecl]
 
--- TODO: Might need to make this more flexible, in case we need to generate declarations or something
 preprocessStmt :: Stmt Preprocessing -> State (Env Typechecking) [Stmt Typechecking]
 preprocessStmt (OnlyWhen cond) = preprocessCond cond
-preprocessStmt s@(Flow _ dst) = do
+preprocessStmt s@(Flow src dst) = do
+    (src', _) <- inferTypes src
+    (dst', _) <- inferTypes dst
     declareVars dst
-    transformedStmt <- transformStmt s
-    pure [transformedStmt]
+    pure [Flow src' dst']
 
-preprocessStmt s@(FlowTransform _ _ dst) = do
+preprocessStmt (FlowTransform src call dst) = do
+    (src', _) <- inferTypes src
+    (dst', _) <- inferTypes dst
+    call' <- inferTransformer call
     declareVars dst
-    transformedStmt <- transformStmt s
-    pure [transformedStmt]
+    pure [FlowTransform src' call' dst']
 
 preprocessStmt s = do
     transformedStmt <- transformStmt s
     pure [transformedStmt]
+
+inferTransformer :: Transformer Preprocessing -> State (Env Typechecking) (Transformer Typechecking)
+inferTransformer (Call name args) = Call name <$> mapM (fmap fst . inferTypes) args
+inferTransformer (Construct name args) = Construct name <$> mapM (fmap fst . inferTypes) args
+
+inferTypes :: Locator Preprocessing -> State (Env Typechecking) (Locator Typechecking, XType Typechecking)
+inferTypes (IntConst n) = (IntConst n,) <$> transformXType @Preprocessing @Typechecking (Infer Nat)
+inferTypes (BoolConst b) = (BoolConst b,) <$> transformXType @Preprocessing @Typechecking (Infer PsaBool)
+inferTypes (StrConst s) = (StrConst s,) <$> transformXType @Preprocessing @Typechecking (Infer PsaString)
+inferTypes (AddrConst a) = (AddrConst a,) <$> transformXType @Preprocessing @Typechecking (Infer Address)
+--- TODO: We should be able to know the actual type quantity of x, not just guess it...
+inferTypes (Var x) = do
+    xTy <- typeOf x
+    q <- inferQuant xTy
+    pure (Var x, (q, xTy))
+inferTypes (Field k name) = do
+    (k', (q, kTy)) <- inferTypes k
+    fieldTy <- lookupField kTy name
+    pure (Field k' name, fieldTy)
+inferTypes l@(Multiset tau xs) = do
+    -- We don't check whether all the ts' are the same here, because that
+    -- gets checked in typechecking. For now, we just take one of them
+    -- (if we can) so that we can infer t, if necessary .
+    (xs', ts') <- unzip <$> mapM inferTypes xs
+    tau' <- case (tau, ts') of
+                (InferredType, []) -> do
+                    addError $ TypeError @Preprocessing ("Could not infer type of multiset literal: " ++ show l) Bot
+                    pure (Any, Bot)
+                (InferredType, elemTy:_) -> pure elemTy
+                (elemTy, _) -> transformXType @Preprocessing @Typechecking elemTy
+    pure (Multiset tau' xs', (Any, Table [] tau'))
+inferTypes (NewVar x t) = do
+    t' <- transformBaseType t
+    pure (NewVar x t', (Empty, t'))
+inferTypes Consume = pure (Consume, bot @Typechecking)
+
+inferTypes (RecordLit keys members) = do
+    members' <- mapM inferMember members
+    pure (RecordLit keys members', (One, Record keys (map fst members')))
+    where
+        inferMember (VarDef x t, init) = do
+            (init', initTy) <- inferTypes init
+            newTy <- case t of
+                        InferredType -> pure initTy
+                        fieldTy -> transformXType @Preprocessing @Typechecking fieldTy
+            pure (VarDef x newTy, init')
+
+inferTypes (Filter l q fName args) = do
+    (l', (_,lTy)) <- inferTypes l
+    (args', _) <- unzip <$> mapM inferTypes args
+    pure (Filter l' q fName args', (q,lTy))
+
+inferTypes (Select l k) = do
+    (l', (_,lBaseT)) <- inferTypes l
+    (k', (q,kTy)) <- inferTypes k
+    keyTypesL <- keyTypes lBaseT
+    let retTy = if kTy `elem` keyTypesL then valueType lBaseT else lBaseT
+    pure (Select l' k', (q, retTy))
 
 declareVars :: Locator Preprocessing -> State (Env Typechecking) ()
 declareVars (NewVar x baseT) = do
@@ -156,7 +217,7 @@ expandCond (BinOp OpEq a b) = do
 expandCond (BinOp OpIn a b) = do
     transformedA <- transformLocator a
     transformedB <- transformLocator b
-    tyA <- typeOfLoc transformedA
+    tyA <- baseTypeOfLoc transformedA
     quant <- inferQuant tyA
     pure [ Flow (Select transformedB (Multiset (quant, tyA) [transformedA])) transformedB ]
 

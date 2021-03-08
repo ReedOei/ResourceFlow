@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications #-}
 
 import Control.Lens ((^.))
 
@@ -33,7 +34,7 @@ parseAndCheck parser str =
         Right term -> pure term
 
 x `shouldParseTo` stmtsStr = do
-    res <- parseAndCheck (do { x <- many parseStmt; eof; pure x }) stmtsStr
+    res <- parseAndCheck (many parseStmt <* eof) stmtsStr
     x `shouldReturn` res
 
 -- | A version of evalState that asserts that there were no errors before returning the result
@@ -50,8 +51,9 @@ evalStr prog = do
 shouldPreprocessAs :: State (Env Typechecking) [Stmt Typechecking] -> String -> IO ()
 x `shouldPreprocessAs` prog = do
     stmts <- evalEnv (newEnv Preprocessor) x
-    progStmts <- evalStr prog
-    stmts `shouldBe` progStmts
+    progStmts <- parseAndCheck (many parseStmt <* eof) prog
+    let transformedStmts = evalState (mapM (transformStmt @Preprocessing @Typechecking @Typechecking) progStmts) $ newEnv Preprocessor
+    stmts `shouldBe` transformedStmts
 
 preprocessorTests = do
     describe "preprocessCond" $ do
@@ -101,18 +103,43 @@ preprocessorTests = do
         it "infers ommitted any type quantities" $ do
             complete <- evalStr "[ any nat ; ] --> var m : map any nat => any nat"
             inferred <- evalStr "[ nat ; ] --> var m : map nat => nat"
-            complete `shouldBe` inferred
+            inferred `shouldBe` complete
 
         it "infers ommitted one type quantities" $ do
             complete <- evalStr "[ one address ; ] --> var m : map one address => one address"
             inferred <- evalStr "[ address ; ] --> var m : map address => address"
-            complete `shouldBe` inferred
+            inferred `shouldBe` complete
 
         it "infers user defined fungible types as any" $ do
             let defineType = "type Token is fungible asset nat"
             complete <- evalStr $ unlines [defineType, "[ Token ; ] --> var tokens : list Token"]
             inferred <- evalStr $ unlines [defineType, "[ any Token ; ] --> var tokens : list any Token"]
-            complete `shouldBe` inferred
+            inferred `shouldBe` complete
+
+        it "infers missing types on record members" $ do
+            complete <- evalStr $ "{ x : any nat |-> 12, y : one bool |-> false } --> var r : { x : any nat, y : one bool }"
+            inferred <- evalStr $ "{ x |-> 12, y |-> false } --> var r : { x : nat, y : bool }"
+            inferred `shouldBe` complete
+
+        it "infers missing types on (nonempty) multiset literals" $ do
+            complete <- evalStr $ "[ any nat; 0,1 ] --> var xs : list any nat"
+            inferred <- evalStr $ "[ 0,1 ] --> var xs : list nat"
+            inferred `shouldBe` complete
+
+        it "infers missing types using declared variables" $ do
+            let header = ["type Token is unique immutable asset nat",
+                          "0 --> new Token() --> var tok : Token"]
+            complete <- evalStr $ unlines $ header ++
+                                            ["var newAccount : { owner : one address, balance : one list one Token } <-- {",
+                                             "    owner : one address |-> 0x123,",
+                                             "    balance : any list one Token |-> [ one Token ; tok ]",
+                                             "}"]
+            inferred <- evalStr $ unlines $ header ++
+                                            ["var newAccount : { owner : address, balance : list Token } <-- {",
+                                             "    owner |-> 0x123,",
+                                             "    balance |-> [ tok ]",
+                                             "}"]
+            inferred `shouldBe` complete
 
 parserTests = do
     describe "parseStmt" $ do

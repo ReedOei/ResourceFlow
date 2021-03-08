@@ -86,32 +86,32 @@ typeOf x = do
             pure dummyBaseType
         Just t -> pure t
 
-typeOfLoc :: Phase p => Locator p -> State (Env p) (BaseType p)
-typeOfLoc (IntConst _) = pure Nat
-typeOfLoc (BoolConst _) = pure PsaBool
-typeOfLoc (StrConst _) = pure PsaString
-typeOfLoc (AddrConst _) = pure Address
-typeOfLoc (Var x) = typeOf x
-typeOfLoc (Multiset t _) = pure $ Table [] t
-typeOfLoc (Select l k) = do
-    lTy <- typeOfLoc l
-    kTy <- typeOfLoc k
+baseTypeOfLoc :: Phase p => Locator p -> State (Env p) (BaseType p)
+baseTypeOfLoc (IntConst _) = pure Nat
+baseTypeOfLoc (BoolConst _) = pure PsaBool
+baseTypeOfLoc (StrConst _) = pure PsaString
+baseTypeOfLoc (AddrConst _) = pure Address
+baseTypeOfLoc (Var x) = typeOf x
+baseTypeOfLoc (Multiset t _) = pure $ Table [] t
+baseTypeOfLoc (Select l k) = do
+    lTy <- baseTypeOfLoc l
+    kTy <- baseTypeOfLoc k
     keyTypesL <- keyTypes lTy
     if kTy `elem` keyTypesL then
         pure $ valueType lTy
     else
         pure lTy
 
-typeOfLoc (Field l x) = do
-    lTy <- typeOfLoc l
-    lookupField lTy x
+baseTypeOfLoc (Field l x) = do
+    lTy <- baseTypeOfLoc l
+    extractBaseType <$> lookupField lTy x
 
-lookupField :: Phase p => BaseType p -> String -> State (Env p) (BaseType p)
+lookupField :: forall p. Phase p => BaseType p -> String -> State (Env p) (XType p)
 lookupField t@(Record key fields) x =
-    case [ extractBaseType t | (VarDef y t) <- fields, x == y ] of
+    case [ t | (VarDef y t) <- fields, x == y ] of
         [] -> do
             addError $ FieldNotFoundError x t
-            pure Bot
+            pure $ bot @p
         (fieldTy:_) -> pure fieldTy
 
 lookupField (Named t) x = do
@@ -134,6 +134,7 @@ keyTypes table@(Table ["key"] t) = do
 
 keyTypes (Table keys t) = pure [Table keys t]
 keyTypes (Record keys fields) = pure $ Record keys fields : [ extractBaseType t | (VarDef x t) <- fields, x `elem` keys ]
+keyTypes Bot = pure [Bot]
 
 valueType :: forall p. Phase p => BaseType p -> BaseType p
 valueType Nat = Nat

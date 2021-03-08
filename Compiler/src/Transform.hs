@@ -79,7 +79,7 @@ transformPrecondition (BinOp op a b) = BinOp op <$> transformLocator a <*> trans
 
 transformPrecondition (NegateCond cond) = NegateCond <$> transformPrecondition cond
 
-transformStmt :: (Phase a, Phase b, Phase c, ProgramTransform a b, PhaseTransition a c) => Stmt a -> State (Env c) (Stmt b)
+transformStmt :: forall a b c. (Phase a, Phase b, Phase c, ProgramTransform a b, PhaseTransition a c) => Stmt a -> State (Env c) (Stmt b)
 transformStmt (Flow src dst) = Flow <$> transformLocator src <*> transformLocator dst
 
 transformStmt (FlowTransform src transformer dst) = FlowTransform <$> transformLocator src <*> transformTransformer transformer <*> transformLocator dst

@@ -24,23 +24,30 @@ class DefinesXType p where
     type XType p    :: *
     extractBaseType :: XType p -> BaseType p
     replaceBaseType :: XType p -> BaseType p -> XType p
+    bot :: XType p
 
 instance DefinesXType Preprocessing where
     type XType Preprocessing = InferrableType Preprocessing
+
     extractBaseType (Complete (q, t)) = t
     extractBaseType (Infer t) = t
+
     replaceBaseType (Complete (q, _)) t = Complete (q, t)
     replaceBaseType (Infer _) t = Infer t
+
+    bot = Complete (Any, Bot)
 
 instance DefinesXType Typechecking where
     type XType Typechecking = QuantifiedType Typechecking
     extractBaseType (q, t) = t
     replaceBaseType (q, _) t = (q, t)
+    bot = (Any, Bot)
 
 instance DefinesXType Compiling where
     type XType Compiling = QuantifiedType Compiling
     extractBaseType (q, t) = t
     replaceBaseType (q, _) t = (q, t)
+    bot = (Any, Bot)
 
 -- AST types, parameterized by compiler phase
 data BaseType phase = Nat | PsaBool | PsaString | Address
@@ -53,6 +60,7 @@ type QuantifiedType phase = (TyQuant, BaseType phase)
 
 data InferrableType phase = Complete (QuantifiedType phase)
                           | Infer (BaseType phase)
+                          | InferredType
 
 data VarDef phase = VarDef String (XType phase)
 
@@ -241,6 +249,7 @@ instance PrettyPrint (XType phase) => PrettyPrint (QuantifiedType phase) where
 instance PrettyPrint (XType phase) => PrettyPrint (InferrableType phase) where
     prettyPrint (Complete qt) = prettyPrint qt
     prettyPrint (Infer baseT) = ["infer " ++ prettyStr baseT]
+    prettyPrint InferredType = ["inferred"]
 
 instance PrettyPrint (XType phase) => PrettyPrint (VarDef phase) where
     prettyPrint (VarDef x t) = [ x ++ " : " ++ prettyStr t ]

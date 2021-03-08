@@ -1,0 +1,10 @@
+var r : { x : nat, y : bool } <-- {
+    x |-> 0x123,
+    y |-> false
+}
+only when r.x = 12
+
+[ 0,1,10 ] --> var xs : list nat
+xs --> var tot : nat
+only when tot = 12
+

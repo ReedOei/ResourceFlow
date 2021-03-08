@@ -7,14 +7,11 @@ module Compiler where
 -- TODO: Error message improvements (i.e., make them more readable), make sure all error messages added (e.g., when selecting by table, need to make sure everything get selected)
 -- TODO: Also, need to clean up **all** non-return vars when exiting the function, probably. BUT BE CAREFUL WITH storage VARIABLES!!!
 -- TODO: Remove the keyset check for destination (e.g., a --> b[k]) should allocate k in `b` if `b` is a map, to match one of Solidity's few useful behaviors
--- TODO: Add preprocessor!!
--- TODO: Locators to implement: consume, copy(_)
 -- TODO: Check that assigning maps/arrays/records works fine
 -- TODO: Try to flow entire maps between each other
 -- TODO: Ensure that the `keys` and `keyset` and everything gets udpated properly
 -- TODO: Check that deletes are right too
 -- TODO: Remove delete from things that cause compilation to fail
--- TODO: Add typechecker!!!
 -- TODO: Make parser to use Parsec's symbol thing properly
 -- TODO: Reorganize tests into actual Haskell tests
 -- TODO: Add .travis.yml configuration for actually testing the Haskell compiler, and make the Travis build work in general
@@ -205,8 +202,7 @@ locate (RecordLit keys members) = do
     initStmts <- concat <$> mapM (locateMember newRecord) members
 
     pure (Var newRecord,
-          [ SolAssign (FieldAccess (SolVar newRecord) "initialized") (SolBool True) ]
-          ++ defs ++ initStmts)
+          defs ++ [ SolAssign (FieldAccess (SolVar newRecord) "initialized") (SolBool True) ] ++ initStmts)
     where
         locateMember newRecord (VarDef x (_, t), l) =
             lookupValue l $ \lTy orig src ->
@@ -233,13 +229,13 @@ lookupValue (Multiset t elems) f = do
 lookupValue (Field l x) f = do
     (newL, init) <- locate l
     stmts <- lookupValue newL $ \lTy orig src -> do
-        fieldTy <- lookupField lTy x
+        fieldTy <- extractBaseType <$> lookupField lTy x
         sendExpr fieldTy (FieldAccess orig x) f
 
     pure $ init ++ stmts
 
 lookupValue (Select l k) f = do
-    kTy <- typeOfLoc k
+    kTy <- baseTypeOfLoc k
     demotedKTy <- demoteBaseType kTy
     kTyIsFungible <- isFungible kTy
 
@@ -363,7 +359,7 @@ receiveValue _ orig src (Select l k) = do
 
 receiveValue _ orig src (Field l x) = do
     lookupValue l $ \ty _ dstExpr -> do
-        fieldTy <- lookupField ty x
+        fieldTy <- extractBaseType <$> lookupField ty x
         receiveExpr fieldTy orig src $ FieldAccess dstExpr x
 
 receiveValue t orig src Consume = do

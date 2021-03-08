@@ -278,7 +278,8 @@ parseRecordLit = do
 
 parseRecordMember :: Parser (VarDef Preprocessing, Locator Preprocessing)
 parseRecordMember = do
-    vdef <- parseVarDef
+    vdef <- try parseVarDef <|>
+            (VarDef <$> parseVarName <*> pure InferredType)
     symbol $ string "|->"
     (vdef,) <$> parseLocator
 
@@ -288,8 +289,7 @@ parseLocators = parseDelimList "," parseLocator
 parseMultiset :: Parser (Locator Preprocessing)
 parseMultiset = do
     symbol $ string "["
-    t <- symbol parseType
-    symbol $ string ";"
+    t <- option InferredType $ try $ symbol parseType <* symbol (string ";")
     elems <- parseLocators
     symbol $ string "]"
     pure $ Multiset t elems
